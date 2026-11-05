@@ -1,0 +1,10 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8081:80"
+    environment:
+      # HTTP API acestream-proxy; при совместном compose — имя сервиса, например http://acestream-proxy:8080
+      PROXY_URL: http://host.docker.internal:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

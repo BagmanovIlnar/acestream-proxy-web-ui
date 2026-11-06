@@ -4,7 +4,6 @@ import './streams.js';
 import './clients.js';
 import './player.js';
 import { startPolling } from './api.js';
-import { selfTest } from './m3u8.js';
 
 // табы
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
@@ -19,11 +18,6 @@ window.addEventListener('health', e => {
 });
 window.addEventListener('channels', e => document.querySelector('#n-channels').textContent = e.detail.length);
 
-if (location.search.includes('selftest')) {
-  const pre = document.createElement('pre');
-  pre.style.cssText = 'padding:20px;color:#34d399';
-  try { pre.textContent = selfTest(); } catch (e) { pre.textContent = String(e); pre.style.color = '#f87171'; }
-  document.body.prepend(pre);
-}
+// selftest m3u8-парсера удалён вместе с самописным MSE-движком (hls.js парсит сам)
 
 startPolling();

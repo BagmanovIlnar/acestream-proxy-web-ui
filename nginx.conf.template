@@ -9,9 +9,12 @@ server {
     add_header Cache-Control "no-cache"; # всегда перепроверять ETag — чтобы браузер не запускал устаревшие js/css
   }
 
-  # API и потоки проксируем на acestream-proxy → same-origin, без CORS
+  # API и потоки проксируем на acestream-proxy → same-origin, без CORS.
+  # proxy_pass через переменную + resolver: nginx резолвит апстрим на запрос, а не на старте —
+  # иначе при лежащем/стартующем прокси nginx падает: "host not found in upstream"
   location ~ ^/(api/|play/|stream/|playlist\.m3u) {
-    proxy_pass ${PROXY_URL};
+    set $acestream_backend "${PROXY_URL}";
+    proxy_pass $acestream_backend;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; # прокси берёт IP зрителя отсюда

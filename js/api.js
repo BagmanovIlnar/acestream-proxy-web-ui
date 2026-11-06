@@ -11,8 +11,6 @@ export async function api(path, opts) {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
   return r.status === 204 ? null : r.json();
 }
-export const fetchText = url => fetch(url, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); });
-export const fetchBuf = url => fetch(url, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); });
 
 const emit = (name, detail) => window.dispatchEvent(new CustomEvent(name, { detail }));
 const every = (ms, fn) => { fn(); setInterval(fn, ms); };

@@ -1,16 +1,10 @@
-import { api, BASE, fetchText, fetchBuf } from './api.js';
-import { parseMaster, parseMedia } from './m3u8.js';
+import { api, BASE } from './api.js';
 import { common } from './styles.js';
 
-// ponytail: свой MSE-плеер вместо hls.js (требование «без зависимостей»); работает потому,
-// что транскод бэкенда отдаёт fMP4-сегменты — демуксер не нужен. TS-потоки движка (passthrough)
-// без hls.js играются только нативно (Safari).
-const appendOne = (sb, buf) => new Promise((res, rej) => {
-  sb.addEventListener('updateend', () => res(), { once: true });
-  sb.addEventListener('error', () => rej(new Error('append failed')), { once: true });
-  sb.appendBuffer(buf);
-});
-
+// ponytail: плеер на hls.js (вендор-файл js/vendor/hls.min.js, без сборки). Самодельный
+// MSE-движок (очередь appends + trimmer + live-jump) после одного битого сегмента
+// молча переставал дописывать буфер — картинка замирала у live-края; hls.js это
+// обрабатывает из коробки. Нативный HLS — только Safari (см. play()).
 customElements.define('player-overlay', class extends HTMLElement {
   connectedCallback() {
     this.audioIdx = 0;
@@ -42,11 +36,8 @@ customElements.define('player-overlay', class extends HTMLElement {
     const $ = s => this.shadowRoot.querySelector(s);
     this.$ = $;
     this.video = $('video');
-    const bufEnd = () => { const b = this.video.buffered; return b.length ? b.end(b.length - 1) : 0; };
-    this.liveJump = () => { const e = bufEnd(); if (e > 0) this.video.currentTime = Math.max(0, e - 1.5); };
-    this.video.addEventListener('waiting', () => { if (bufEnd() - this.video.currentTime > 3) this.liveJump(); });
     this.video.addEventListener('error', () => {
-      // Chrome/Firefox врут в canPlayType и ломаются на нативном HLS — падаем на MSE-транскод
+      // Chrome/Firefox врут в canPlayType и ломаются на нативном HLS — падаем на hls.js
       if (this.native && this.id) { this.native = false; this.setStatus('нативный HLS не поддерживается → транскод'); this.startMSE(this.id); }
     });
     $('#close').onclick = () => this.close();
@@ -57,80 +48,46 @@ customElements.define('player-overlay', class extends HTMLElement {
 
   setStatus(msg, err) { const el = this.$('#status'); el.textContent = msg; el.className = 'status' + (err ? ' err' : ''); }
 
-  // ---- MSE live HLS ----
-  makeAppender(sb) { // сериализованная очередь на один SourceBuffer
-    let q = Promise.resolve();
-    return buf => q = q.then(async () => {
-      try { await appendOne(sb, buf); }
-      catch { try { sb.remove(0, this.video.currentTime - 5); await appendOne(sb, buf); } catch { /* сегмент потерян, едем дальше */ } }
-    });
-  }
-
-  runPlaylist(uri, sb, seen, st) {
-    let initAppended = null, first = true;
-    const append = this.makeAppender(sb);
-    const tick = async () => {
-      if (st !== this.mse) return; // плеер перезапущен
-      let pl;
-      try { pl = parseMedia(await fetchText(uri), uri); } catch { return; } // транзиентная ошибка — ждём следующий тик
-      if (pl.init && initAppended !== pl.init) { await append(await fetchBuf(pl.init)); initAppended = pl.init; }
-      let fresh = pl.segs.filter(u => !seen.has(u));
-      if (first) { fresh = fresh.slice(-3); first = false; } // начинаем у live-края
-      for (const u of fresh) {
-        seen.add(u);
-        const b = await fetchBuf(u).catch(() => null);
-        if (b) append(b);
-      }
-      if (fresh.length && !st.started) {
-        st.startedCount = (st.startedCount || 0) + 1;
-        if (st.startedCount >= (st.hasAudio ? 2 : 1)) { // ждём и видео, и аудио
-          st.started = true;
-          this.video.play().then(() => this.liveJump()).catch(() => {});
-        }
-      }
-    };
-    tick();
-    st.timers.push(setInterval(tick, 2000));
-  }
-
+  // ---- транскод через hls.js ----
   startMSE(id) {
     this.native = false;
     this.stopMSE();
-    // база обязательна абсолютная: parseMaster строит new URL(сегмент, master) — с относительной masterUrl падает
-    const masterUrl = `${location.origin}${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
-    const st = this.mse = { timers: [], seenV: new Set(), seenA: new Set(), started: false, hasAudio: false };
-    const ms = st.ms = new MediaSource();
-    this.video.src = URL.createObjectURL(ms);
-    ms.addEventListener('sourceopen', async () => {
-      if (st !== this.mse) return;
-      try {
-        const m = parseMaster(await fetchText(masterUrl), masterUrl);
-        // MSE требует полный MIME с кодеками: разделяем CODECS="avc1...,mp4a..." на видео/аудио
-        const cs = (m.variants[0]?.codecs || 'avc1.640028,mp4a.40.2').split(',');
-        const v = cs.filter(c => /^(avc1|avc3|hvc1|hev1)/.test(c)).join(',');
-        const ac = cs.filter(c => /^(mp4a|ec-3|ac-3)/.test(c)).join(',');
-        st.sbV = ms.addSourceBuffer(`video/mp4; codecs="${v || 'avc1.640028'}"`);
-        if (m.media) { this.setStatus('транскод (без аудио)'); this.runPlaylist(masterUrl, st.sbV, st.seenV, st); return; }
-        const audio = m.audios[Math.min(this.audioIdx, m.audios.length - 1)];
-        st.hasAudio = !!audio;
-        if (audio) st.sbA = ms.addSourceBuffer(`audio/mp4; codecs="${ac || 'mp4a.40.2'}"`);
-        this.setStatus('транскод → браузер' + (audio ? ` · аудио: ${audio.name}` : ''));
-        this.runPlaylist(m.variants[0].uri, st.sbV, st.seenV, st);
-        if (audio) this.runPlaylist(audio.uri, st.sbA, st.seenA, st);
-        st.trimmer = setInterval(() => { // не даём буферу расти бесконечно
-          const from = this.video.currentTime - 60;
-          for (const sb of [st.sbV, st.sbA]) if (sb && sb.buffered.length && sb.buffered.start(0) < from) sb.remove(0, from);
-        }, 20000);
-      } catch (e) { this.setStatus('Ошибка запуска: ' + e.message, true); }
-    }, { once: true });
+    if (!window.Hls) { this.setStatus('hls.js не загрузился — обновите страницу', true); return; }
+    if (!Hls.isSupported()) { this.setStatus('браузер не поддерживает MSE', true); return; }
+    // холодный старт p2p: прокси держит /master.m3u8 пока ffmpeg не выдаст плейлист —
+    // щедрые ретраи манифеста, чтобы пережить медленные источники и редкие 504
+    const hls = new Hls({
+      liveDurationInfinity: true,
+      backBufferLength: 60,
+      manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 180000, maxTimeToLoadMs: 200000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 500, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 } } },
+    });
+    this.mse = { hls };
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        this.setStatus('восстановление после ошибки декодирования…');
+        hls.recoverMediaError();
+        return;
+      }
+      this.setStatus('поток оборвался, перезапуск через 10с…');
+      const sid = id;
+      setTimeout(() => { if (this.id === sid) this.startMSE(sid); }, 10000);
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      // мультитрек-рендишены аудио (если появятся) — по селектору
+      if (hls.audioTracks?.length > 1) hls.audioTrack = Math.min(this.audioIdx, hls.audioTracks.length - 1);
+      this.setStatus('транскод → браузер');
+      this.video.play().catch(() => {});
+    });
+    this.setStatus('запуск транскода… (p2p прогрев, до ~2 мин)');
+    hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8`);
+    hls.attachMedia(this.video);
   }
 
   stopMSE() {
     const st = this.mse; if (!st) return;
     this.mse = null;
-    st.timers.forEach(clearInterval);
-    clearInterval(st.trimmer);
-    if (st.ms && st.ms.readyState === 'open') try { st.ms.endOfStream(); } catch { /* уже закрыт */ }
+    try { st.hls.destroy(); } catch { /* уже уничтожен */ }
   }
 
   async play(id, title) {
@@ -141,23 +98,46 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.video.removeAttribute('src'); this.video.load();
     this.id = id;
     let info;
-    try { info = await api(`/api/streams/${encodeURIComponent(id)}/audio`); }
+    // холодный старт канала: движок буферизует p2p, probe занимает десятки секунд.
+    // fetch без таймаута терпелив; при ошибке (probe failed / сессия движка умерла)
+    // прокси сносит стрим — один ретрай через 5с пересоздаёт сессию и чинит запуск
+    const audioInfo = async () => {
+      this.setStatus('запуск сессии… (p2p прогрев, до ~90с)');
+      try { return await api(`/api/streams/${encodeURIComponent(id)}/audio`); }
+      catch (e) {
+        this.setStatus('повтор через 5с: ' + e.message);
+        await new Promise(r => setTimeout(r, 5000));
+        return api(`/api/streams/${encodeURIComponent(id)}/audio`);
+      }
+    };
+    try { info = await audioInfo(); }
     catch (e) { this.setStatus('Ошибка: ' + e.message, true); return; }
 
-    const sel = this.$('#audio'); // дорожки из probe; в MSE-режиме имена совпадают с рендишенами по порядку
+    const sel = this.$('#audio'); // дорожки из probe (транскод отдаёт первую)
     sel.innerHTML = info.tracks.map((t, i) => `<option value="${i}">аудио ${i + 1}: ${esc0(t.codec)}${t.lang ? ' · ' + esc0(t.lang) : ''}</option>`).join('');
     sel.hidden = info.tracks.length < 2;
     this.audioIdx = Math.min(this.audioIdx, Math.max(0, info.tracks.length - 1));
     sel.value = this.audioIdx;
 
     if (info.passthrough) {
-      if (this.video.canPlayType('application/vnd.apple.mpegurl')) {
+      // нативный HLS реально умеет только Safari; Chrome в canPlayType отвечает «maybe»
+      // и потом молча не играет (error может вообще не прийти) — всем остальным hls.js
+      const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
+      if (safari && this.video.canPlayType('application/vnd.apple.mpegurl')) {
         this.native = true;
         this.setStatus('прямой HLS движка (без транскода)');
         this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
         this.video.play().catch(() => {});
+        // страховка: если за 8с ни одного кадра — не ждём error, сразу в транскод
+        setTimeout(() => {
+          if (this.native && this.video.readyState === 0) {
+            this.native = false;
+            this.setStatus('нативный HLS не завёлся → транскод');
+            this.startMSE(id);
+          }
+        }, 8000);
       } else {
-        this.startMSE(id); // нативного HLS нет (Firefox) — сразу транскод
+        this.startMSE(id);
       }
     } else {
       this.startMSE(id);

@@ -6,6 +6,7 @@ server {
   location / {
     root /usr/share/nginx/html;
     try_files $uri $uri/ =404;
+    add_header Cache-Control "no-cache"; # всегда перепроверять ETag — чтобы браузер не запускал устаревшие js/css
   }
 
   # API и потоки проксируем на acestream-proxy → same-origin, без CORS

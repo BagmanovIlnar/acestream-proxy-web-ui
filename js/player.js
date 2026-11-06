@@ -49,7 +49,7 @@ customElements.define('player-overlay', class extends HTMLElement {
   setStatus(msg, err) { const el = this.$('#status'); el.textContent = msg; el.className = 'status' + (err ? ' err' : ''); }
 
   // ---- транскод через hls.js ----
-  startMSE(id) {
+  startMSE(id, forceEnc) {
     this.native = false;
     this.stopMSE();
     if (!window.Hls) { this.setStatus('hls.js не загрузился — обновите страницу', true); return; }
@@ -65,22 +65,31 @@ customElements.define('player-overlay', class extends HTMLElement {
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        this.setStatus('восстановление после ошибки декодирования…');
+        // remux (copy h264) тащит мусор источника в MSE: после пары ошибок
+        // декодирования переезжаем на полный транскод (?enc=1) — самовосстановление
+        this.mediaFails = (this.mediaFails || 0) + 1;
+        if (this.mediaFails >= 2 && !this.enc) {
+          this.enc = true;
+          this.setStatus('битые кадры в remux → полный транскод…');
+          this.startMSE(id, true);
+          return;
+        }
+        this.setStatus('восстановление после ошибки декодирования (' + data.details + ')…');
         hls.recoverMediaError();
         return;
       }
-      this.setStatus('поток оборвался, перезапуск через 10с…');
+      this.setStatus('поток оборвался (' + data.details + '), перезапуск через 10с…');
       const sid = id;
-      setTimeout(() => { if (this.id === sid) this.startMSE(sid); }, 10000);
+      setTimeout(() => { if (this.id === sid) this.startMSE(sid, this.enc); }, 10000);
     });
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       // мультитрек-рендишены аудио (если появятся) — по селектору
       if (hls.audioTracks?.length > 1) hls.audioTrack = Math.min(this.audioIdx, hls.audioTracks.length - 1);
-      this.setStatus('транскод → браузер');
+      this.setStatus(this.enc ? 'полный транскод → браузер' : 'транскод → браузер');
       this.video.play().catch(() => {});
     });
     this.setStatus('запуск транскода… (p2p прогрев, до ~2 мин)');
-    hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8`);
+    hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (forceEnc ? '?enc=1' : ''));
     hls.attachMedia(this.video);
   }
 
@@ -97,6 +106,8 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.setStatus('запуск сессии…');
     this.video.removeAttribute('src'); this.video.load();
     this.id = id;
+    this.enc = false; // новый канал — заново решаем remux/транскод
+    this.mediaFails = 0;
     const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
     if (!safari) {
       // Chrome/Firefox: транскод сразу, без префлайта /audio — тот ждёт probe до ~90с,
@@ -150,6 +161,8 @@ customElements.define('player-overlay', class extends HTMLElement {
   close() {
     this.stopMSE();
     this.native = false;
+    this.enc = false;
+    this.mediaFails = 0;
     this.$('#overlay').classList.remove('open');
     this.video.removeAttribute('src'); this.video.load();
     this.id = null;

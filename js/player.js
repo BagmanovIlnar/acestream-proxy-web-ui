@@ -17,6 +17,10 @@ customElements.define('player-overlay', class extends HTMLElement {
       .status.err { color: var(--bad); }
       video { flex: 1; width: 100%; min-height: 0; background: #000; outline: none; object-fit: contain; }
       #audio { max-width: 220px; }
+      #sync { display: none; align-items: center; gap: 6px; color: var(--dim); font-size: 12.5px; flex: none; }
+      #sync button { appearance: none; cursor: pointer; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text); width: 30px; height: 28px; font-size: 13px; }
+      #sync button:hover { border-color: var(--accent); color: var(--accent); }
+      #sync .v { min-width: 48px; text-align: center; }
       #close {
         appearance: none; cursor: pointer; background: none; border: 1px solid var(--border);
         border-radius: 10px; color: var(--text); width: 36px; height: 36px; font-size: 16px; flex: none;
@@ -28,6 +32,7 @@ customElements.define('player-overlay', class extends HTMLElement {
       <div class="top">
         <span class="title" id="title"></span>
         <span class="status" id="status"></span>
+        <span id="sync"><button id="ad-early" title="звук раньше">◀🔊</button><span class="v" id="ad-val">0.0с</span><button id="ad-late" title="звук позже">🔊▶</button></span>
         <select id="audio" hidden></select>
         <button id="close" title="Закрыть (Esc)">✕</button>
       </div>
@@ -38,12 +43,25 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.video = $('video');
     this.video.addEventListener('error', () => {
       // Chrome/Firefox врут в canPlayType и ломаются на нативном HLS — падаем на hls.js
-      if (this.native && this.id) { this.native = false; this.setStatus('нативный HLS не поддерживается → транскод'); this.startMSE(this.id); }
+      if (this.native && this.id) { this.native = false; this.setStatus('нативный HLS не поддерживается → транскод'); this.startMSE(this.id, this.enc); }
     });
     $('#close').onclick = () => this.close();
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.close(); });
-    $('#audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id); } };
+    $('#audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id, this.enc); } };
+    // подстройка звука канала: IPTV-эфиры часто с зашитым рассинхроном —
+    // VLC компенсирует сам, браузер нет; сдвиг помнится на канал
+    $('#ad-early').onclick = () => this.shiftAudio(-100);
+    $('#ad-late').onclick = () => this.shiftAudio(100);
     window.addEventListener('play', e => this.play(e.detail.id, e.detail.title));
+  }
+
+  shiftAudio(delta) {
+    if (!this.id) return;
+    this.ad = Math.max(-10000, Math.min(10000, (this.ad || 0) + delta));
+    localStorage.setItem('ad:' + this.id, this.ad);
+    this.$('#ad-val').textContent = (this.ad / 1000).toFixed(1) + 'с';
+    this.setStatus('сдвиг звука ' + (this.ad / 1000).toFixed(1) + 'с…');
+    this.startMSE(this.id, this.enc);
   }
 
   setStatus(msg, err) { const el = this.$('#status'); el.textContent = msg; el.className = 'status' + (err ? ' err' : ''); }
@@ -89,7 +107,8 @@ customElements.define('player-overlay', class extends HTMLElement {
       this.video.play().catch(() => {});
     });
     this.setStatus('запуск транскода… (p2p прогрев, до ~2 мин)');
-    hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (forceEnc ? '?enc=1' : ''));
+    const q = [this.enc && 'enc=1', this.ad && 'ad=' + this.ad].filter(Boolean).join('&');
+    hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (q ? '?' + q : ''));
     hls.attachMedia(this.video);
   }
 
@@ -108,12 +127,16 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.id = id;
     this.enc = false; // новый канал — заново решаем remux/транскод
     this.mediaFails = 0;
+    this.ad = +(localStorage.getItem('ad:' + id) || 0); // сдвиг звука канала (мс)
+    const sync = this.$('#sync');
+    sync.style.display = 'inline-flex';
+    this.$('#ad-val').textContent = (this.ad / 1000).toFixed(1) + 'с';
     const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
     if (!safari) {
       // Chrome/Firefox: транскод сразу, без префлайта /audio — тот ждёт probe до ~90с,
       // а нужен был только для выбора аудиодорожки (при одной варианте селектор всё
       // равно декоративный). master.m3u8 теперь отдаёт транскод без probe.
-      this.startMSE(id);
+      this.startMSE(id, this.enc);
       return;
     }
     let info;
@@ -143,18 +166,18 @@ customElements.define('player-overlay', class extends HTMLElement {
       // молча не играет — ему всегда hls.js (ветка выше)
         this.native = true;
         this.setStatus('прямой HLS движка (без транскода)');
-        this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
+        this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (this.ad ? '?ad=' + this.ad : '');
         this.video.play().catch(() => {});
         // страховка: если за 8с ни одного кадра — не ждём error, сразу в транскод
         setTimeout(() => {
           if (this.native && this.video.readyState === 0) {
             this.native = false;
             this.setStatus('нативный HLS не завёлся → транскод');
-            this.startMSE(id);
+            this.startMSE(id, this.enc);
           }
         }, 8000);
     } else {
-      this.startMSE(id);
+      this.startMSE(id, this.enc);
     }
   }
 

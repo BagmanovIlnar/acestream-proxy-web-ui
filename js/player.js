@@ -45,9 +45,9 @@ customElements.define('player-overlay', class extends HTMLElement {
     const bufEnd = () => { const b = this.video.buffered; return b.length ? b.end(b.length - 1) : 0; };
     this.liveJump = () => { const e = bufEnd(); if (e > 0) this.video.currentTime = Math.max(0, e - 1.5); };
     this.video.addEventListener('waiting', () => { if (bufEnd() - this.video.currentTime > 3) this.liveJump(); });
-    $('close').onclick = () => this.close();
+    $('#close').onclick = () => this.close();
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.close(); });
-    $('audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id); } };
+    $('#audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id); } };
     window.addEventListener('play', e => this.play(e.detail.id, e.detail.title));
   }
 

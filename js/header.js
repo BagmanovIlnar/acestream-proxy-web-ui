@@ -1,3 +1,4 @@
+import { BASE } from './api.js';
 import { common } from './styles.js';
 
 customElements.define('app-header', class extends HTMLElement {
@@ -7,7 +8,7 @@ customElements.define('app-header', class extends HTMLElement {
       header {
         display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 20px;
         background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(10px);
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--border); box-shadow: 0 6px 24px rgba(2, 6, 16, .35);
       }
       .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
       .brand svg { width: 26px; height: 26px; }
@@ -26,6 +27,7 @@ customElements.define('app-header', class extends HTMLElement {
       <span class="chip">v<b id="ver">—</b></span>
       <span class="chip">стримы <b id="streams">0</b></span>
       <span class="chip">зрители <b id="clients">0</b></span>
+      <a class="chip" href="${BASE}/api/playlist.m3u" target="_blank" rel="noopener" title="Плейлист m3u">m3u ⤴</a>
     </header>`;
     this.$ = s => this.shadowRoot.querySelector(s);
     window.addEventListener('health', e => this.render(e.detail));

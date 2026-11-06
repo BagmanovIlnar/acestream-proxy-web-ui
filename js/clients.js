@@ -4,10 +4,12 @@ import { common } from './styles.js';
 customElements.define('clients-tab', class extends HTMLElement {
   connectedCallback() {
     this.attachShadow({ mode: 'open' }).innerHTML = `<style>${common}
-      table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+      table { width: 100%; border-collapse: collapse; background: linear-gradient(180deg, #141d33, var(--panel)); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
       th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
       th { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
       tr:last-child td { border-bottom: 0; }
+      tbody tr { transition: background .15s; }
+      tbody tr:hover { background: rgba(110, 168, 255, .05); }
       .ua { color: var(--dim); font-size: 12px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
       .content { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     </style>

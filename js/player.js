@@ -15,17 +15,18 @@ customElements.define('player-overlay', class extends HTMLElement {
   connectedCallback() {
     this.audioIdx = 0;
     this.attachShadow({ mode: 'open' }).innerHTML = `<style>${common}
-      #overlay { position: fixed; inset: 0; z-index: 50; background: #05070b; display: none; flex-direction: column; }
+      #overlay { position: fixed; inset: 0; z-index: 50; background: radial-gradient(1200px 800px at 50% -20%, #10182b, #05070b 65%); display: none; flex-direction: column; }
       #overlay.open { display: flex; }
-      .top { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
-      .title { font-weight: 700; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .top { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: rgba(7, 11, 20, .75); backdrop-filter: blur(10px); }
+      .title { font-weight: 700; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
       .status { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .status.err { color: var(--bad); }
       video { flex: 1; width: 100%; min-height: 0; background: #000; outline: none; object-fit: contain; }
       #audio { max-width: 220px; }
       #close {
         appearance: none; cursor: pointer; background: none; border: 1px solid var(--border);
-        border-radius: 8px; color: var(--text); width: 34px; height: 34px; font-size: 16px; flex: none;
+        border-radius: 10px; color: var(--text); width: 36px; height: 36px; font-size: 16px; flex: none;
+        transition: border-color .15s, color .15s;
       }
       #close:hover { border-color: var(--bad); color: var(--bad); }
     </style>

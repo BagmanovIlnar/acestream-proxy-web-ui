@@ -2,6 +2,7 @@
 // тема остаётся в одном месте.
 export const common = `
   :host { display: block; }
+  :host([hidden]) { display: none; } // перебивает :host{display:block} — иначе атрибут hidden не скрывает вкладки
   * { box-sizing: border-box; }
   input[type=text], select {
     background: var(--panel2); border: 1px solid var(--border); color: var(--text);

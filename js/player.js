@@ -45,6 +45,10 @@ customElements.define('player-overlay', class extends HTMLElement {
     const bufEnd = () => { const b = this.video.buffered; return b.length ? b.end(b.length - 1) : 0; };
     this.liveJump = () => { const e = bufEnd(); if (e > 0) this.video.currentTime = Math.max(0, e - 1.5); };
     this.video.addEventListener('waiting', () => { if (bufEnd() - this.video.currentTime > 3) this.liveJump(); });
+    this.video.addEventListener('error', () => {
+      // Chrome/Firefox врут в canPlayType и ломаются на нативном HLS — падаем на MSE-транскод
+      if (this.native && this.id) { this.native = false; this.setStatus('нативный HLS не поддерживается → транскод'); this.startMSE(this.id); }
+    });
     $('#close').onclick = () => this.close();
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.close(); });
     $('#audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id); } };
@@ -90,8 +94,10 @@ customElements.define('player-overlay', class extends HTMLElement {
   }
 
   startMSE(id) {
+    this.native = false;
     this.stopMSE();
-    const masterUrl = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
+    // база обязательна абсолютная: parseMaster строит new URL(сегмент, master) — с относительной masterUrl падает
+    const masterUrl = `${location.origin}${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
     const st = this.mse = { timers: [], seenV: new Set(), seenA: new Set(), started: false, hasAudio: false };
     const ms = st.ms = new MediaSource();
     this.video.src = URL.createObjectURL(ms);
@@ -99,11 +105,15 @@ customElements.define('player-overlay', class extends HTMLElement {
       if (st !== this.mse) return;
       try {
         const m = parseMaster(await fetchText(masterUrl), masterUrl);
-        st.sbV = ms.addSourceBuffer('video/mp4');
+        // MSE требует полный MIME с кодеками: разделяем CODECS="avc1...,mp4a..." на видео/аудио
+        const cs = (m.variants[0]?.codecs || 'avc1.640028,mp4a.40.2').split(',');
+        const v = cs.filter(c => /^(avc1|avc3|hvc1|hev1)/.test(c)).join(',');
+        const ac = cs.filter(c => /^(mp4a|ec-3|ac-3)/.test(c)).join(',');
+        st.sbV = ms.addSourceBuffer(`video/mp4; codecs="${v || 'avc1.640028'}"`);
         if (m.media) { this.setStatus('транскод (без аудио)'); this.runPlaylist(masterUrl, st.sbV, st.seenV, st); return; }
         const audio = m.audios[Math.min(this.audioIdx, m.audios.length - 1)];
         st.hasAudio = !!audio;
-        if (audio) st.sbA = ms.addSourceBuffer('audio/mp4');
+        if (audio) st.sbA = ms.addSourceBuffer(`audio/mp4; codecs="${ac || 'mp4a.40.2'}"`);
         this.setStatus('транскод → браузер' + (audio ? ` · аудио: ${audio.name}` : ''));
         this.runPlaylist(m.variants[0].uri, st.sbV, st.seenV, st);
         if (audio) this.runPlaylist(audio.uri, st.sbA, st.seenA, st);
@@ -142,11 +152,12 @@ customElements.define('player-overlay', class extends HTMLElement {
 
     if (info.passthrough) {
       if (this.video.canPlayType('application/vnd.apple.mpegurl')) {
+        this.native = true;
         this.setStatus('прямой HLS движка (без транскода)');
         this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
         this.video.play().catch(() => {});
       } else {
-        this.setStatus('Кодеки браузерные → движок отдаёт TS-HLS, который без hls.js играет только Safari. Настройте транскод на бэке (?transcode=1) или смотрите с Safari.', true);
+        this.startMSE(id); // нативного HLS нет (Firefox) — сразу транскод
       }
     } else {
       this.startMSE(id);
@@ -155,6 +166,7 @@ customElements.define('player-overlay', class extends HTMLElement {
 
   close() {
     this.stopMSE();
+    this.native = false;
     this.$('#overlay').classList.remove('open');
     this.video.removeAttribute('src'); this.video.load();
     this.id = null;

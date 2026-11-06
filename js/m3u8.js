@@ -16,8 +16,9 @@ export function parseMaster(text, base) {
       const a = attrs(l.slice(13));
       if (a.TYPE === 'AUDIO' && a.URI) audios.push({ uri: new URL(a.URI, base).href, name: a.NAME || a.LANGUAGE || 'дорожка', def: a.DEFAULT === 'YES' });
     } else if (l.startsWith('#EXT-X-STREAM-INF:')) {
+      const sa = attrs(l.slice(18));
       let j = i + 1; while (j < lines.length && lines[j].startsWith('#')) j++;
-      if (j < lines.length) variants.push({ uri: new URL(lines[j], base).href });
+      if (j < lines.length) variants.push({ uri: new URL(lines[j], base).href, codecs: sa.CODECS || '' });
     }
   }
   return { media: false, variants, audios };

@@ -97,10 +97,18 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.setStatus('запуск сессии…');
     this.video.removeAttribute('src'); this.video.load();
     this.id = id;
+    const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
+    if (!safari) {
+      // Chrome/Firefox: транскод сразу, без префлайта /audio — тот ждёт probe до ~90с,
+      // а нужен был только для выбора аудиодорожки (при одной варианте селектор всё
+      // равно декоративный). master.m3u8 теперь отдаёт транскод без probe.
+      this.startMSE(id);
+      return;
+    }
     let info;
     // холодный старт канала: движок буферизует p2p, probe занимает десятки секунд.
     // fetch без таймаута терпелив; при ошибке (probe failed / сессия движка умерла)
-    // прокси сносит стрим — один ретрай через 5с пересоздаёт сессию и чинит запуск
+    // прокси отдаёт 503 без сноса стрима — один ретрай через 5с
     const audioInfo = async () => {
       this.setStatus('запуск сессии… (p2p прогрев, до ~90с)');
       try { return await api(`/api/streams/${encodeURIComponent(id)}/audio`); }
@@ -119,11 +127,9 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.audioIdx = Math.min(this.audioIdx, Math.max(0, info.tracks.length - 1));
     sel.value = this.audioIdx;
 
-    if (info.passthrough) {
-      // нативный HLS реально умеет только Safari; Chrome в canPlayType отвечает «maybe»
-      // и потом молча не играет (error может вообще не прийти) — всем остальным hls.js
-      const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
-      if (safari && this.video.canPlayType('application/vnd.apple.mpegurl')) {
+    if (info.passthrough && this.video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari умеет нативный HLS; Chrome в canPlayType отвечает «maybe» и потом
+      // молча не играет — ему всегда hls.js (ветка выше)
         this.native = true;
         this.setStatus('прямой HLS движка (без транскода)');
         this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
@@ -136,9 +142,6 @@ customElements.define('player-overlay', class extends HTMLElement {
             this.startMSE(id);
           }
         }, 8000);
-      } else {
-        this.startMSE(id);
-      }
     } else {
       this.startMSE(id);
     }

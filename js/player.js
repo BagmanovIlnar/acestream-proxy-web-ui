@@ -47,7 +47,14 @@ customElements.define('player-overlay', class extends HTMLElement {
     });
     $('#close').onclick = () => this.close();
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.close(); });
-    $('#audio').onchange = e => { this.audioIdx = +e.target.value; if (this.id) { this.setStatus('переключение дорожки…'); this.startMSE(this.id, this.enc); } };
+    $('#audio').onchange = e => {
+      this.audioIdx = +e.target.value;
+      if (!this.id) return;
+      this.at = this.audioIdx;
+      localStorage.setItem('at:' + this.id, this.at);
+      this.setStatus('дорожка ' + (this.at + 1) + '…');
+      this.startMSE(this.id, this.enc);
+    };
     // подстройка звука канала: IPTV-эфиры часто с зашитым рассинхроном —
     // VLC компенсирует сам, браузер нет; сдвиг помнится на канал
     $('#ad-early').onclick = () => this.shiftAudio(-100);
@@ -107,7 +114,7 @@ customElements.define('player-overlay', class extends HTMLElement {
       this.video.play().catch(() => {});
     });
     this.setStatus('запуск транскода… (p2p прогрев, до ~2 мин)');
-    const q = [this.enc && 'enc=1', this.ad && 'ad=' + this.ad].filter(Boolean).join('&');
+    const q = [this.enc && 'enc=1', this.ad && 'ad=' + this.ad, this.at != null && 'at=' + this.at].filter(Boolean).join('&');
     hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (q ? '?' + q : ''));
     hls.attachMedia(this.video);
   }
@@ -128,9 +135,19 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.enc = false; // новый канал — заново решаем remux/транскод
     this.mediaFails = 0;
     this.ad = +(localStorage.getItem('ad:' + id) || 0); // сдвиг звука канала (мс)
+    this.at = +(localStorage.getItem('at:' + id) || 0); // выбранная аудиодорожка
     const sync = this.$('#sync');
     sync.style.display = 'inline-flex';
     this.$('#ad-val').textContent = (this.ad / 1000).toFixed(1) + 'с';
+    // список дорожек — в фоне (не мешает старту): селектор появится, когда probe
+    // увидит дорожки; выбор идёт в транскод через ?at=N (липкий, как сдвиг)
+    api(`/api/streams/${encodeURIComponent(id)}/audio`).then(info => {
+      if (this.id !== id) return;
+      const sel = this.$('#audio');
+      sel.innerHTML = info.tracks.map((t, i) => `<option value="${i}">аудио ${i + 1}: ${esc0(t.codec)}${t.lang ? ' · ' + esc0(t.lang) : ''}</option>`).join('');
+      sel.hidden = info.tracks.length < 2;
+      sel.value = Math.min(this.at, info.tracks.length - 1);
+    }).catch(() => {});
     const safari = navigator.userAgent.includes('Safari') && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
     if (!safari) {
       // Chrome/Firefox: транскод сразу, без префлайта /audio — тот ждёт probe до ~90с,

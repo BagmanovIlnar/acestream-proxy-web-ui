@@ -17,10 +17,6 @@ customElements.define('player-overlay', class extends HTMLElement {
       .status.err { color: var(--bad); }
       video { flex: 1; width: 100%; min-height: 0; background: #000; outline: none; object-fit: contain; }
       #audio { max-width: 220px; }
-      #sync { display: none; align-items: center; gap: 6px; color: var(--dim); font-size: 12.5px; flex: none; }
-      #sync button { appearance: none; cursor: pointer; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text); width: 30px; height: 28px; font-size: 13px; }
-      #sync button:hover { border-color: var(--accent); color: var(--accent); }
-      #sync .v { min-width: 48px; text-align: center; }
       #close {
         appearance: none; cursor: pointer; background: none; border: 1px solid var(--border);
         border-radius: 10px; color: var(--text); width: 36px; height: 36px; font-size: 16px; flex: none;
@@ -32,7 +28,6 @@ customElements.define('player-overlay', class extends HTMLElement {
       <div class="top">
         <span class="title" id="title"></span>
         <span class="status" id="status"></span>
-        <span id="sync"><button id="ad-early" title="звук раньше">◀🔊</button><span class="v" id="ad-val">0.0с</span><button id="ad-late" title="звук позже">🔊▶</button></span>
         <select id="audio" hidden></select>
         <button id="close" title="Закрыть (Esc)">✕</button>
       </div>
@@ -55,20 +50,7 @@ customElements.define('player-overlay', class extends HTMLElement {
       this.setStatus('дорожка ' + (this.at + 1) + '…');
       this.startMSE(this.id, this.enc);
     };
-    // подстройка звука канала: IPTV-эфиры часто с зашитым рассинхроном —
-    // VLC компенсирует сам, браузер нет; сдвиг помнится на канал
-    $('#ad-early').onclick = () => this.shiftAudio(-100);
-    $('#ad-late').onclick = () => this.shiftAudio(100);
     window.addEventListener('play', e => this.play(e.detail.id, e.detail.title));
-  }
-
-  shiftAudio(delta) {
-    if (!this.id) return;
-    this.ad = Math.max(-10000, Math.min(10000, (this.ad || 0) + delta));
-    localStorage.setItem('ad:' + this.id, this.ad);
-    this.$('#ad-val').textContent = (this.ad / 1000).toFixed(1) + 'с';
-    this.setStatus('сдвиг звука ' + (this.ad / 1000).toFixed(1) + 'с…');
-    this.startMSE(this.id, this.enc);
   }
 
   setStatus(msg, err) { const el = this.$('#status'); el.textContent = msg; el.className = 'status' + (err ? ' err' : ''); }
@@ -114,7 +96,7 @@ customElements.define('player-overlay', class extends HTMLElement {
       this.video.play().catch(() => {});
     });
     this.setStatus('запуск транскода… (p2p прогрев, до ~2 мин)');
-    const q = [this.enc && 'enc=1', this.ad && 'ad=' + this.ad, this.at != null && 'at=' + this.at].filter(Boolean).join('&');
+    const q = [this.enc && 'enc=1', this.at != null && 'at=' + this.at].filter(Boolean).join('&');
     hls.loadSource(`${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (q ? '?' + q : ''));
     hls.attachMedia(this.video);
   }
@@ -134,11 +116,7 @@ customElements.define('player-overlay', class extends HTMLElement {
     this.id = id;
     this.enc = false; // новый канал — заново решаем remux/транскод
     this.mediaFails = 0;
-    this.ad = +(localStorage.getItem('ad:' + id) || 0); // сдвиг звука канала (мс)
     this.at = +(localStorage.getItem('at:' + id) || 0); // выбранная аудиодорожка
-    const sync = this.$('#sync');
-    sync.style.display = 'inline-flex';
-    this.$('#ad-val').textContent = (this.ad / 1000).toFixed(1) + 'с';
     // список дорожек — в фоне (не мешает старту): селектор появится, когда probe
     // увидит дорожки; выбор идёт в транскод через ?at=N (липкий, как сдвиг)
     api(`/api/streams/${encodeURIComponent(id)}/audio`).then(info => {
@@ -183,7 +161,7 @@ customElements.define('player-overlay', class extends HTMLElement {
       // молча не играет — ему всегда hls.js (ветка выше)
         this.native = true;
         this.setStatus('прямой HLS движка (без транскода)');
-        this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8` + (this.ad ? '?ad=' + this.ad : '');
+        this.video.src = `${BASE}/play/${encodeURIComponent(id)}/master.m3u8`;
         this.video.play().catch(() => {});
         // страховка: если за 8с ни одного кадра — не ждём error, сразу в транскод
         setTimeout(() => {
